@@ -1,87 +1,100 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import { Settings as SettingsIcon, PlusCircle, Trash2, Edit } from 'lucide-react';
+import { PlusCircle, Edit, Trash2, Settings as SettingsIcon, Workflow, Users, LayoutGrid, List, X } from 'lucide-react';
 
 interface WorkflowState {
   id: string;
   name: string;
-  type: 'project' | 'task';
+  type: 'project' | 'task'; // Added type property
+  is_initial: boolean;
+  is_final: boolean;
 }
 
 interface WorkflowTransition {
   id: string;
   from_state_id: string;
   to_state_id: string;
-  rule_description: string;
-  from_state_name?: string;
-  to_state_name?: string;
+  type: 'project' | 'task'; // Added type property
+}
+
+interface Team {
+  id: string;
+  name: string;
+}
+
+interface TeamMember {
+  id: string;
+  team_id: string;
+  resource_id: string;
+  role_in_team: string;
+  resource: { name: string }[] | null; // Changed to array
 }
 
 const Settings: React.FC = () => {
-  const [projectStates, setProjectStates] = useState<WorkflowState[]>([]);
-  const [taskStates, setTaskStates] = useState<WorkflowState[]>([]);
-  const [projectTransitions, setProjectTransitions] = useState<WorkflowTransition[]>([]);
-  const [taskTransitions, setTaskTransitions] = useState<WorkflowTransition[]>([]);
+  const [activeTab, setActiveTab] = useState('general');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Workflow States
+  const [workflowStates, setWorkflowStates] = useState<WorkflowState[]>([]);
   const [showStateModal, setShowStateModal] = useState(false);
   const [isEditingState, setIsEditingState] = useState(false);
-  const [currentState, setCurrentState] = useState<Partial<WorkflowState>>({ name: '', type: 'task' });
+  const [currentState, setCurrentState] = useState<Partial<WorkflowState>>({});
 
+  // Workflow Transitions
+  const [workflowTransitions, setWorkflowTransitions] = useState<WorkflowTransition[]>([]);
   const [showTransitionModal, setShowTransitionModal] = useState(false);
   const [isEditingTransition, setIsEditingTransition] = useState(false);
-  const [currentTransition, setCurrentTransition] = useState<Partial<WorkflowTransition>>({ from_state_id: '', to_state_id: '', rule_description: '' });
+  const [currentTransition, setCurrentTransition] = useState<Partial<WorkflowTransition>>({});
   const [availableStatesForTransition, setAvailableStatesForTransition] = useState<WorkflowState[]>([]);
 
-  useEffect(() => {
-    fetchWorkflowData();
-  }, []);
+  // Teams
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [showTeamModal, setShowTeamModal] = useState(false);
+  const [isEditingTeam, setIsEditingTeam] = useState(false);
+  const [currentTeam, setCurrentTeam] = useState<Partial<Team>>({});
 
-  const fetchWorkflowData = async () => {
+  // Team Members
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
+  const [showMemberModal, setShowMemberModal] = useState(false);
+  const [isEditingMember, setIsEditingMember] = useState(false);
+  const [currentMember, setCurrentMember] = useState<Partial<TeamMember>>({});
+  const [resources, setResources] = useState<{ id: string; name: string }[]>([]);
+
+  useEffect(() => {
+    fetchData();
+  }, [activeTab]);
+
+  const fetchData = async () => {
     setLoading(true);
     setError(null);
     try {
-      const { data: states, error: statesError } = await supabase
-        .from('workflow_states')
-        .select('*')
-        .order('name', { ascending: true });
-      if (statesError) throw statesError;
-
-      setProjectStates(states.filter(s => s.type === 'project'));
-      setTaskStates(states.filter(s => s.type === 'task'));
-
-      const { data: transitions, error: transitionsError } = await supabase
-        .from('workflow_transitions')
-        .select(`
-          *,
-          from_state:workflow_states!from_state_id(name, type),
-          to_state:workflow_states!to_state_id(name, type)
-        `);
-      if (transitionsError) throw transitionsError;
-
-      const formattedTransitions = transitions.map(t => ({
-        ...t,
-        from_state_name: t.from_state?.name || 'N/A',
-        to_state_name: t.to_state?.name || 'N/A',
-        type: t.from_state?.type || 'task' // Infer type from from_state
-      }));
-
-      setProjectTransitions(formattedTransitions.filter(t => t.type === 'project'));
-      setTaskTransitions(formattedTransitions.filter(t => t.type === 'task'));
-
+      if (activeTab === 'workflow') {
+        await fetchWorkflowStates();
+        await fetchWorkflowTransitions();
+      } else if (activeTab === 'teams') {
+        await fetchTeams();
+        await fetchTeamMembers();
+        await fetchResources();
+      }
     } catch (err: any) {
       setError(err.message);
-      console.error('Error fetching workflow data:', err);
+      console.error('Error fetching settings data:', err);
     } finally {
       setLoading(false);
     }
   };
 
-  // --- State Management ---
-  const handleCreateState = (type: 'project' | 'task') => {
+  // --- Workflow States Functions ---
+  const fetchWorkflowStates = async () => {
+    const { data, error } = await supabase.from('workflow_states').select('*').order('name');
+    if (error) throw error;
+    setWorkflowStates(data as WorkflowState[]);
+  };
+
+  const handleCreateState = () => {
     setIsEditingState(false);
-    setCurrentState({ name: '', type });
+    setCurrentState({ name: '', type: 'task', is_initial: false, is_final: false });
     setShowStateModal(true);
   };
 
@@ -92,21 +105,14 @@ const Settings: React.FC = () => {
   };
 
   const handleDeleteState = async (id: string) => {
-    if (window.confirm('Are you sure you want to delete this state? This will also delete any transitions associated with it.')) {
-      setLoading(true);
+    if (window.confirm('Are you sure you want to delete this workflow state?')) {
       try {
-        // Delete associated transitions first
-        await supabase.from('workflow_transitions').delete().or(`from_state_id.eq.${id},to_state_id.eq.${id}`);
-
-        // Then delete the state
         const { error } = await supabase.from('workflow_states').delete().eq('id', id);
         if (error) throw error;
-        fetchWorkflowData();
+        fetchWorkflowStates();
+        fetchWorkflowTransitions(); // Transitions might be affected
       } catch (err: any) {
         setError(err.message);
-        console.error('Error deleting state:', err);
-      } finally {
-        setLoading(false);
       }
     }
   };
@@ -114,57 +120,62 @@ const Settings: React.FC = () => {
   const handleStateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setError(null);
     try {
       if (isEditingState && currentState.id) {
-        const { error } = await supabase
-          .from('workflow_states')
-          .update({ name: currentState.name, type: currentState.type })
-          .eq('id', currentState.id);
+        const { error } = await supabase.from('workflow_states').update(currentState).eq('id', currentState.id);
         if (error) throw error;
       } else {
-        const { error } = await supabase
-          .from('workflow_states')
-          .insert({ name: currentState.name, type: currentState.type });
+        const { error } = await supabase.from('workflow_states').insert(currentState);
         if (error) throw error;
       }
       setShowStateModal(false);
-      fetchWorkflowData();
+      fetchWorkflowStates();
     } catch (err: any) {
       setError(err.message);
-      console.error('Error saving state:', err);
     } finally {
       setLoading(false);
     }
   };
 
-  // --- Transition Management ---
-  const handleCreateTransition = (type: 'project' | 'task') => {
+  // --- Workflow Transitions Functions ---
+  const fetchWorkflowTransitions = async () => {
+    const { data, error } = await supabase
+      .from('workflow_transitions')
+      .select(`
+        *,
+        from_state:workflow_states!from_state_id(name, type),
+        to_state:workflow_states!to_state_id(name, type)
+      `)
+      .order('from_state_id');
+    if (error) throw error;
+    setWorkflowTransitions(data as WorkflowTransition[]);
+  };
+
+  const handleCreateTransition = () => {
     setIsEditingTransition(false);
-    setCurrentTransition({ from_state_id: '', to_state_id: '', rule_description: '' });
-    setAvailableStatesForTransition(type === 'project' ? projectStates : taskStates);
+    setCurrentTransition({ from_state_id: '', to_state_id: '', type: 'task' });
+    setAvailableStatesForTransition(workflowStates.filter(s => s.type === 'task')); // Default to task
     setShowTransitionModal(true);
   };
 
   const handleEditTransition = (transition: WorkflowTransition) => {
     setIsEditingTransition(true);
     setCurrentTransition(transition);
+    // Filter states based on the transition's type
+    const projectStates = workflowStates.filter(s => s.type === 'project');
+    const taskStates = workflowStates.filter(s => s.type === 'task');
     setAvailableStatesForTransition(transition.type === 'project' ? projectStates : taskStates);
     setShowTransitionModal(true);
   };
 
   const handleDeleteTransition = async (id: string) => {
-    if (window.confirm('Are you sure you want to delete this transition?')) {
-      setLoading(true);
+    if (window.confirm('Are you sure you want to delete this workflow transition?')) {
       try {
         const { error } = await supabase.from('workflow_transitions').delete().eq('id', id);
         if (error) throw error;
-        fetchWorkflowData();
+        fetchWorkflowTransitions();
       } catch (err: any) {
         setError(err.message);
-        console.error('Error deleting transition:', err);
-      } finally {
-        setLoading(false);
       }
     }
   };
@@ -172,39 +183,139 @@ const Settings: React.FC = () => {
   const handleTransitionSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
-    setError(null);
     try {
       if (isEditingTransition && currentTransition.id) {
-        const { error } = await supabase
-          .from('workflow_transitions')
-          .update({
-            from_state_id: currentTransition.from_state_id,
-            to_state_id: currentTransition.to_state_id,
-            rule_description: currentTransition.rule_description,
-          })
-          .eq('id', currentTransition.id);
+        const { error } = await supabase.from('workflow_transitions').update(currentTransition).eq('id', currentTransition.id);
         if (error) throw error;
       } else {
-        const { error } = await supabase
-          .from('workflow_transitions')
-          .insert({
-            from_state_id: currentTransition.from_state_id,
-            to_state_id: currentTransition.to_state_id,
-            rule_description: currentTransition.rule_description,
-          });
+        const { error } = await supabase.from('workflow_transitions').insert(currentTransition);
         if (error) throw error;
       }
       setShowTransitionModal(false);
-      fetchWorkflowData();
+      fetchWorkflowTransitions();
     } catch (err: any) {
       setError(err.message);
-      console.error('Error saving transition:', err);
     } finally {
       setLoading(false);
     }
   };
 
-  if (loading) {
+  // --- Teams Functions ---
+  const fetchTeams = async () => {
+    const { data, error } = await supabase.from('teams').select('*').order('name');
+    if (error) throw error;
+    setTeams(data as Team[]);
+  };
+
+  const handleCreateTeam = () => {
+    setIsEditingTeam(false);
+    setCurrentTeam({ name: '' });
+    setShowTeamModal(true);
+  };
+
+  const handleEditTeam = (team: Team) => {
+    setIsEditingTeam(true);
+    setCurrentTeam(team);
+    setShowTeamModal(true);
+  };
+
+  const handleDeleteTeam = async (id: string) => {
+    if (window.confirm('Are you sure you want to delete this team? This will also remove associated team members.')) {
+      try {
+        const { error } = await supabase.from('teams').delete().eq('id', id);
+        if (error) throw error;
+        fetchTeams();
+        fetchTeamMembers(); // Members might be affected
+      } catch (err: any) {
+        setError(err.message);
+      }
+    }
+  };
+
+  const handleTeamSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      if (isEditingTeam && currentTeam.id) {
+        const { error } = await supabase.from('teams').update(currentTeam).eq('id', currentTeam.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('teams').insert(currentTeam);
+        if (error) throw error;
+      }
+      setShowTeamModal(false);
+      fetchTeams();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // --- Team Members Functions ---
+  const fetchTeamMembers = async () => {
+    const { data, error } = await supabase
+      .from('team_members')
+      .select(`
+        *,
+        resource:resources(name)
+      `)
+      .order('team_id');
+    if (error) throw error;
+    setTeamMembers(data as TeamMember[]);
+  };
+
+  const fetchResources = async () => {
+    const { data, error } = await supabase.from('resources').select('id, name');
+    if (error) throw error;
+    setResources(data);
+  };
+
+  const handleCreateMember = () => {
+    setIsEditingMember(false);
+    setCurrentMember({ team_id: '', resource_id: '', role_in_team: '' });
+    setShowMemberModal(true);
+  };
+
+  const handleEditMember = (member: TeamMember) => {
+    setIsEditingMember(true);
+    setCurrentMember(member);
+    setShowMemberModal(true);
+  };
+
+  const handleDeleteMember = async (id: string) => {
+    if (window.confirm('Are you sure you want to remove this team member?')) {
+      try {
+        const { error } = await supabase.from('team_members').delete().eq('id', id);
+        if (error) throw error;
+        fetchTeamMembers();
+      } catch (err: any) {
+        setError(err.message);
+      }
+    }
+  };
+
+  const handleMemberSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+    try {
+      if (isEditingMember && currentMember.id) {
+        const { error } = await supabase.from('team_members').update(currentMember).eq('id', currentMember.id);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from('team_members').insert(currentMember);
+        if (error) throw error;
+      }
+      setShowMemberModal(false);
+      fetchTeamMembers();
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (loading && workflowStates.length === 0 && teams.length === 0) {
     return (
       <div className="flex justify-center items-center h-64">
         <svg className="animate-spin h-8 w-8 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -221,155 +332,297 @@ const Settings: React.FC = () => {
       <div className="text-red-600 bg-red-100 p-4 rounded-lg">
         <p>Error: {error}</p>
         <p>Please ensure your Supabase tables are set up correctly and you have RLS policies that allow data access.</p>
-      </div >
+      </div>
     );
   }
 
   return (
     <div className="container mx-auto p-4">
-      <h1 className="text-3xl font-bold text-gray-800 mb-6 flex items-center">
-        <SettingsIcon className="mr-3" size={32} /> Application Settings
-      </h1>
+      <h1 className="text-3xl font-bold text-gray-800 mb-6">Settings</h1>
 
-      {/* Workflow States Section */}
-      <div className="bg-white rounded-xl shadow-lg p-6 mb-8 border border-gray-200">
-        <h2 className="text-2xl font-semibold text-gray-800 mb-4 border-b pb-3">Workflow States</h2>
+      <div className="flex border-b border-gray-200 mb-6">
+        <button
+          onClick={() => setActiveTab('general')}
+          className={`px-6 py-3 text-lg font-medium ${activeTab === 'general' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-600 hover:text-gray-800'} transition-colors duration-200`}
+        >
+          <SettingsIcon className="inline-block mr-2" size={20} /> General
+        </button>
+        <button
+          onClick={() => setActiveTab('workflow')}
+          className={`px-6 py-3 text-lg font-medium ${activeTab === 'workflow' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-600 hover:text-gray-800'} transition-colors duration-200`}
+        >
+          <Workflow className="inline-block mr-2" size={20} /> Workflow
+        </button>
+        <button
+          onClick={() => setActiveTab('teams')}
+          className={`px-6 py-3 text-lg font-medium ${activeTab === 'teams' ? 'border-b-2 border-blue-600 text-blue-600' : 'text-gray-600 hover:text-gray-800'} transition-colors duration-200`}
+        >
+          <Users className="inline-block mr-2" size={20} /> Teams
+        </button>
+      </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Project States */}
-          <div>
-            <div className="flex justify-between items-center mb-3">
-              <h3 className="text-xl font-medium text-gray-800">Project States</h3>
+      {activeTab === 'general' && (
+        <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-200">
+          <h2 className="text-2xl font-bold text-gray-800 mb-4">General Settings</h2>
+          <p className="text-gray-700">
+            This section is for general application settings.
+            Future features might include user profile management, notification preferences, or global display options.
+          </p>
+        </div>
+      )}
+
+      {activeTab === 'workflow' && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Workflow States Section */}
+          <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-200">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-2xl font-bold text-gray-800">Workflow States</h2>
               <button
-                onClick={() => handleCreateState('project')}
-                className="flex items-center px-3 py-1.5 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 transition-colors duration-200 text-sm"
+                onClick={handleCreateState}
+                className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 transition-colors duration-200"
               >
-                <PlusCircle className="mr-2" size={16} /> Add State
+                <PlusCircle className="mr-2" size={20} /> New State
               </button>
             </div>
-            {projectStates.length === 0 ? (
-              <p className="text-gray-500">No project states defined.</p>
+            {workflowStates.length === 0 ? (
+              <p className="text-gray-600">No workflow states defined yet.</p>
             ) : (
-              <ul className="space-y-2">
-                {projectStates.map(state => (
-                  <li key={state.id} className="flex justify-between items-center bg-gray-50 p-3 rounded-lg border border-gray-200">
-                    <span className="font-medium text-gray-700">{state.name}</span>
-                    <div className="flex space-x-2">
-                      <button onClick={() => handleEditState(state)} className="p-1 rounded-full text-yellow-600 hover:bg-yellow-100 transition-colors"><Edit size={16} /></button>
-                      <button onClick={() => handleDeleteState(state.id)} className="p-1 rounded-full text-red-600 hover:bg-red-100 transition-colors"><Trash2 size={16} /></button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
+                      <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Initial</th>
+                      <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Final</th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {workflowStates.map((state) => (
+                      <tr key={state.id} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{state.name}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 capitalize">{state.type}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-700">
+                          {state.is_initial ? <CheckCircle size={18} className="text-green-500 mx-auto" /> : <XCircle size={18} className="text-red-500 mx-auto" />}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-700">
+                          {state.is_final ? <CheckCircle size={18} className="text-green-500 mx-auto" /> : <XCircle size={18} className="text-red-500 mx-auto" />}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                          <div className="flex justify-end space-x-2">
+                            <button
+                              onClick={() => handleEditState(state)}
+                              className="p-2 rounded-full text-yellow-600 hover:bg-yellow-100 transition-colors"
+                              title="Edit State"
+                            >
+                              <Edit size={18} />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteState(state.id)}
+                              className="p-2 rounded-full text-red-600 hover:bg-red-100 transition-colors"
+                              title="Delete State"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
 
-          {/* Task States */}
-          <div>
-            <div className="flex justify-between items-center mb-3">
-              <h3 className="text-xl font-medium text-gray-800">Task States</h3>
+          {/* Workflow Transitions Section */}
+          <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-200">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-2xl font-bold text-gray-800">Workflow Transitions</h2>
               <button
-                onClick={() => handleCreateState('task')}
-                className="flex items-center px-3 py-1.5 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 transition-colors duration-200 text-sm"
+                onClick={handleCreateTransition}
+                className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 transition-colors duration-200"
               >
-                <PlusCircle className="mr-2" size={16} /> Add State
+                <PlusCircle className="mr-2" size={20} /> New Transition
               </button>
             </div>
-            {taskStates.length === 0 ? (
-              <p className="text-gray-500">No task states defined.</p>
+            {workflowTransitions.length === 0 ? (
+              <p className="text-gray-600">No workflow transitions defined yet.</p>
             ) : (
-              <ul className="space-y-2">
-                {taskStates.map(state => (
-                  <li key={state.id} className="flex justify-between items-center bg-gray-50 p-3 rounded-lg border border-gray-200">
-                    <span className="font-medium text-gray-700">{state.name}</span>
-                    <div className="flex space-x-2">
-                      <button onClick={() => handleEditState(state)} className="p-1 rounded-full text-yellow-600 hover:bg-yellow-100 transition-colors"><Edit size={16} /></button>
-                      <button onClick={() => handleDeleteState(state.id)} className="p-1 rounded-full text-red-600 hover:bg-red-100 transition-colors"><Trash2 size={16} /></button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">From State</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">To State</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {workflowTransitions.map((transition) => (
+                      <tr key={transition.id} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                          {(transition as any).from_state?.name || 'N/A'}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                          {(transition as any).to_state?.name || 'N/A'}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700 capitalize">
+                          {transition.type}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                          <div className="flex justify-end space-x-2">
+                            <button
+                              onClick={() => handleEditTransition(transition)}
+                              className="p-2 rounded-full text-yellow-600 hover:bg-yellow-100 transition-colors"
+                              title="Edit Transition"
+                            >
+                              <Edit size={18} />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteTransition(transition.id)}
+                              className="p-2 rounded-full text-red-600 hover:bg-red-100 transition-colors"
+                              title="Delete Transition"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </div>
-      </div>
+      )}
 
-      {/* Workflow Transitions Section */}
-      <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-200">
-        <h2 className="text-2xl font-semibold text-gray-800 mb-4 border-b pb-3">Workflow Transitions</h2>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Project Transitions */}
-          <div>
-            <div className="flex justify-between items-center mb-3">
-              <h3 className="text-xl font-medium text-gray-800">Project Transitions</h3>
+      {activeTab === 'teams' && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Teams Section */}
+          <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-200">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-2xl font-bold text-gray-800">Teams</h2>
               <button
-                onClick={() => handleCreateTransition('project')}
-                className="flex items-center px-3 py-1.5 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 transition-colors duration-200 text-sm"
+                onClick={handleCreateTeam}
+                className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 transition-colors duration-200"
               >
-                <PlusCircle className="mr-2" size={16} /> Add Transition
+                <PlusCircle className="mr-2" size={20} /> New Team
               </button>
             </div>
-            {projectTransitions.length === 0 ? (
-              <p className="text-gray-500">No project transitions defined.</p>
+            {teams.length === 0 ? (
+              <p className="text-gray-600">No teams defined yet.</p>
             ) : (
-              <ul className="space-y-2">
-                {projectTransitions.map(transition => (
-                  <li key={transition.id} className="bg-gray-50 p-3 rounded-lg border border-gray-200">
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="font-medium text-gray-700">{transition.from_state_name} &rarr; {transition.to_state_name}</span>
-                      <div className="flex space-x-2">
-                        <button onClick={() => handleEditTransition(transition)} className="p-1 rounded-full text-yellow-600 hover:bg-yellow-100 transition-colors"><Edit size={16} /></button>
-                        <button onClick={() => handleDeleteTransition(transition.id)} className="p-1 rounded-full text-red-600 hover:bg-red-100 transition-colors"><Trash2 size={16} /></button>
-                      </div>
-                    </div>
-                    <p className="text-sm text-gray-600">Rule: {transition.rule_description || 'No specific rule'}</p>
-                  </li>
-                ))}
-              </ul>
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {teams.map((team) => (
+                      <tr key={team.id} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{team.name}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                          <div className="flex justify-end space-x-2">
+                            <button
+                              onClick={() => handleEditTeam(team)}
+                              className="p-2 rounded-full text-yellow-600 hover:bg-yellow-100 transition-colors"
+                              title="Edit Team"
+                            >
+                              <Edit size={18} />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteTeam(team.id)}
+                              className="p-2 rounded-full text-red-600 hover:bg-red-100 transition-colors"
+                              title="Delete Team"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
 
-          {/* Task Transitions */}
-          <div>
-            <div className="flex justify-between items-center mb-3">
-              <h3 className="text-xl font-medium text-gray-800">Task Transitions</h3>
+          {/* Team Members Section */}
+          <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-200">
+            <div className="flex justify-between items-center mb-4">
+              <h2 className="text-2xl font-bold text-gray-800">Team Members</h2>
               <button
-                onClick={() => handleCreateTransition('task')}
-                className="flex items-center px-3 py-1.5 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 transition-colors duration-200 text-sm"
+                onClick={handleCreateMember}
+                className="flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 transition-colors duration-200"
               >
-                <PlusCircle className="mr-2" size={16} /> Add Transition
+                <PlusCircle className="mr-2" size={20} /> Add Member
               </button>
             </div>
-            {taskTransitions.length === 0 ? (
-              <p className="text-gray-500">No task transitions defined.</p>
+            {teamMembers.length === 0 ? (
+              <p className="text-gray-600">No team members defined yet.</p>
             ) : (
-              <ul className="space-y-2">
-                {taskTransitions.map(transition => (
-                  <li key={transition.id} className="bg-gray-50 p-3 rounded-lg border border-gray-200">
-                    <div className="flex justify-between items-center mb-1">
-                      <span className="font-medium text-gray-700">{transition.from_state_name} &rarr; {transition.to_state_name}</span>
-                      <div className="flex space-x-2">
-                        <button onClick={() => handleEditTransition(transition)} className="p-1 rounded-full text-yellow-600 hover:bg-yellow-100 transition-colors"><Edit size={16} /></button>
-                        <button onClick={() => handleDeleteTransition(transition.id)} className="p-1 rounded-full text-red-600 hover:bg-red-100 transition-colors"><Trash2 size={16} /></button>
-                      </div>
-                    </div>
-                    <p className="text-sm text-gray-600">Rule: {transition.rule_description || 'No specific rule'}</p>
-                  </li>
-                ))}
-              </ul>
+              <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-gray-200">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Team</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Resource</th>
+                      <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
+                      <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="bg-white divide-y divide-gray-200">
+                    {teamMembers.map((member) => (
+                      <tr key={member.id} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                          {teams.find(t => t.id === member.team_id)?.name || 'N/A'}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
+                          {member.resource?.[0]?.name || 'N/A'}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{member.role_in_team}</td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                          <div className="flex justify-end space-x-2">
+                            <button
+                              onClick={() => handleEditMember(member)}
+                              className="p-2 rounded-full text-yellow-600 hover:bg-yellow-100 transition-colors"
+                              title="Edit Member"
+                            >
+                              <Edit size={18} />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteMember(member.id)}
+                              className="p-2 rounded-full text-red-600 hover:bg-red-100 transition-colors"
+                              title="Delete Member"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             )}
           </div>
         </div>
-      </div>
+      )}
 
-      {/* State Modal */}
+      {/* Workflow State Modal */}
       {showStateModal && (
         <div className="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl shadow-2xl p-8 w-full max-w-md transform transition-all duration-300 scale-100 opacity-100">
-            <h2 className="text-2xl font-bold text-gray-800 mb-6 border-b pb-3">
-              {isEditingState ? 'Edit Workflow State' : 'Create New Workflow State'}
-            </h2>
+          <div className="bg-white rounded-xl shadow-2xl p-8 w-full max-w-md max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6 border-b pb-3">
+              <h2 className="text-2xl font-bold text-gray-800">{isEditingState ? 'Edit Workflow State' : 'Create New Workflow State'}</h2>
+              <button onClick={() => setShowStateModal(false)} className="p-2 rounded-full text-gray-600 hover:bg-gray-100"><X size={24} /></button>
+            </div>
             <form onSubmit={handleStateSubmit} className="space-y-4">
               <div>
                 <label htmlFor="stateName" className="block text-sm font-medium text-gray-700 mb-1">State Name</label>
@@ -395,41 +648,61 @@ const Settings: React.FC = () => {
                   <option value="project">Project</option>
                 </select>
               </div>
-              {error && (
-                <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg relative" role="alert">
-                  <strong className="font-bold">Error!</strong>
-                  <span className="block sm:inline"> {error}</span>
-                </div>
-              )}
-              <div className="flex justify-end space-x-3 mt-6">
-                <button
-                  type="button"
-                  onClick={() => setShowStateModal(false)}
-                  className="px-5 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100 transition-colors duration-200"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="px-5 py-2 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  {loading ? 'Saving...' : (isEditingState ? 'Update State' : 'Create State')}
-                </button>
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="isInitial"
+                  checked={currentState.is_initial || false}
+                  onChange={(e) => setCurrentState({ ...currentState, is_initial: e.target.checked })}
+                  className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                />
+                <label htmlFor="isInitial" className="ml-2 block text-sm text-gray-900">Is Initial State</label>
+              </div>
+              <div className="flex items-center">
+                <input
+                  type="checkbox"
+                  id="isFinal"
+                  checked={currentState.is_final || false}
+                  onChange={(e) => setCurrentState({ ...currentState, is_final: e.target.checked })}
+                  className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                />
+                <label htmlFor="isFinal" className="ml-2 block text-sm text-gray-900">Is Final State</label>
+              </div>
+              <div className="flex justify-end space-x-3 mt-4">
+                <button type="button" onClick={() => setShowStateModal(false)} className="px-5 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100">Cancel</button>
+                <button type="submit" disabled={loading} className="px-5 py-2 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 disabled:opacity-50">{loading ? 'Saving...' : 'Save State'}</button>
               </div>
             </form>
           </div>
         </div>
       )}
 
-      {/* Transition Modal */}
+      {/* Workflow Transition Modal */}
       {showTransitionModal && (
         <div className="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl shadow-2xl p-8 w-full max-w-md transform transition-all duration-300 scale-100 opacity-100">
-            <h2 className="text-2xl font-bold text-gray-800 mb-6 border-b pb-3">
-              {isEditingTransition ? 'Edit Workflow Transition' : 'Create New Workflow Transition'}
-            </h2>
+          <div className="bg-white rounded-xl shadow-2xl p-8 w-full max-w-md max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6 border-b pb-3">
+              <h2 className="text-2xl font-bold text-gray-800">{isEditingTransition ? 'Edit Workflow Transition' : 'Create New Workflow Transition'}</h2>
+              <button onClick={() => setShowTransitionModal(false)} className="p-2 rounded-full text-gray-600 hover:bg-gray-100"><X size={24} /></button>
+            </div>
             <form onSubmit={handleTransitionSubmit} className="space-y-4">
+              <div>
+                <label htmlFor="transitionType" className="block text-sm font-medium text-gray-700 mb-1">Applies To</label>
+                <select
+                  id="transitionType"
+                  value={currentTransition.type || 'task'}
+                  onChange={(e) => {
+                    const newType = e.target.value as 'project' | 'task';
+                    setCurrentTransition({ ...currentTransition, type: newType, from_state_id: '', to_state_id: '' });
+                    setAvailableStatesForTransition(workflowStates.filter(s => s.type === newType));
+                  }}
+                  className="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
+                  required
+                >
+                  <option value="task">Task</option>
+                  <option value="project">Project</option>
+                </select>
+              </div>
               <div>
                 <label htmlFor="fromState" className="block text-sm font-medium text-gray-700 mb-1">From State</label>
                 <select
@@ -460,38 +733,97 @@ const Settings: React.FC = () => {
                   ))}
                 </select>
               </div>
-              <div>
-                <label htmlFor="ruleDescription" className="block text-sm font-medium text-gray-700 mb-1">Rule Description (Optional)</label>
-                <textarea
-                  id="ruleDescription"
-                  value={currentTransition.rule_description || ''}
-                  onChange={(e) => setCurrentTransition({ ...currentTransition, rule_description: e.target.value })}
-                  rows={2}
-                  placeholder="e.g., 'Only Project Manager can close'"
-                  className="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
-                ></textarea>
+              <div className="flex justify-end space-x-3 mt-4">
+                <button type="button" onClick={() => setShowTransitionModal(false)} className="px-5 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100">Cancel</button>
+                <button type="submit" disabled={loading} className="px-5 py-2 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 disabled:opacity-50">{loading ? 'Saving...' : 'Save Transition'}</button>
               </div>
-              {error && (
-                <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg relative" role="alert">
-                  <strong className="font-bold">Error!</strong>
-                  <span className="block sm:inline"> {error}</span>
-                </div>
-              )}
-              <div className="flex justify-end space-x-3 mt-6">
-                <button
-                  type="button"
-                  onClick={() => setShowTransitionModal(false)}
-                  className="px-5 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100 transition-colors duration-200"
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Team Modal */}
+      {showTeamModal && (
+        <div className="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-2xl p-8 w-full max-w-md max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6 border-b pb-3">
+              <h2 className="text-2xl font-bold text-gray-800">{isEditingTeam ? 'Edit Team' : 'Create New Team'}</h2>
+              <button onClick={() => setShowTeamModal(false)} className="p-2 rounded-full text-gray-600 hover:bg-gray-100"><X size={24} /></button>
+            </div>
+            <form onSubmit={handleTeamSubmit} className="space-y-4">
+              <div>
+                <label htmlFor="teamName" className="block text-sm font-medium text-gray-700 mb-1">Team Name</label>
+                <input
+                  type="text"
+                  id="teamName"
+                  value={currentTeam.name || ''}
+                  onChange={(e) => setCurrentTeam({ ...currentTeam, name: e.target.value })}
+                  className="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
+                  required
+                />
+              </div>
+              <div className="flex justify-end space-x-3 mt-4">
+                <button type="button" onClick={() => setShowTeamModal(false)} className="px-5 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100">Cancel</button>
+                <button type="submit" disabled={loading} className="px-5 py-2 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 disabled:opacity-50">{loading ? 'Saving...' : 'Save Team'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Team Member Modal */}
+      {showMemberModal && (
+        <div className="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl shadow-2xl p-8 w-full max-w-md max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center mb-6 border-b pb-3">
+              <h2 className="text-2xl font-bold text-gray-800">{isEditingMember ? 'Edit Team Member' : 'Add Team Member'}</h2>
+              <button onClick={() => setShowMemberModal(false)} className="p-2 rounded-full text-gray-600 hover:bg-gray-100"><X size={24} /></button>
+            </div>
+            <form onSubmit={handleMemberSubmit} className="space-y-4">
+              <div>
+                <label htmlFor="memberTeam" className="block text-sm font-medium text-gray-700 mb-1">Team</label>
+                <select
+                  id="memberTeam"
+                  value={currentMember.team_id || ''}
+                  onChange={(e) => setCurrentMember({ ...currentMember, team_id: e.target.value })}
+                  className="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
+                  required
                 >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="px-5 py-2 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                  <option value="">Select a team</option>
+                  {teams.map(team => (
+                    <option key={team.id} value={team.id}>{team.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="memberResource" className="block text-sm font-medium text-gray-700 mb-1">Resource</label>
+                <select
+                  id="memberResource"
+                  value={currentMember.resource_id || ''}
+                  onChange={(e) => setCurrentMember({ ...currentMember, resource_id: e.target.value })}
+                  className="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
+                  required
                 >
-                  {loading ? 'Saving...' : (isEditingTransition ? 'Update Transition' : 'Create Transition')}
-                </button>
+                  <option value="">Select a resource</option>
+                  {resources.map(resource => (
+                    <option key={resource.id} value={resource.id}>{resource.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label htmlFor="memberRole" className="block text-sm font-medium text-gray-700 mb-1">Role in Team</label>
+                <input
+                  type="text"
+                  id="memberRole"
+                  value={currentMember.role_in_team || ''}
+                  onChange={(e) => setCurrentMember({ ...currentMember, role_in_team: e.target.value })}
+                  className="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
+                  required
+                />
+              </div>
+              <div className="flex justify-end space-x-3 mt-4">
+                <button type="button" onClick={() => setShowMemberModal(false)} className="px-5 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100">Cancel</button>
+                <button type="submit" disabled={loading} className="px-5 py-2 bg-blue-600 text-white rounded-lg shadow-md hover:bg-blue-700 disabled:opacity-50">{loading ? 'Saving...' : 'Save Member'}</button>
               </div>
             </form>
           </div>

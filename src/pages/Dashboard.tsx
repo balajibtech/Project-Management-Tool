@@ -13,7 +13,8 @@ interface Project {
   end_date: string;
   progress: number;
   team_id: string | null;
-  teams: { name: string } | null; // Joined team name
+  teams: { name: string }[] | null; // Changed to array as Supabase returns array for joined tables
+  priority: string; // Added priority
 }
 
 interface Task {
@@ -52,6 +53,7 @@ const Dashboard: React.FC = () => {
             end_date,
             progress,
             team_id,
+            priority,
             teams ( name )
           `);
         if (projectsError) throw projectsError;
@@ -65,7 +67,7 @@ const Dashboard: React.FC = () => {
         // Calculate Stats
         const activeProj = projects.filter(p => p.status === 'Active' || p.status === 'In Progress');
         setActiveProjectsCount(activeProj.length);
-        setActiveProjects(activeProj); // For the Active Projects section
+        setActiveProjects(activeProj as Project[]); // Cast to Project[] to satisfy type
 
         const completedTasks = tasks.filter(t => t.status === 'Completed' || t.status === 'Done');
         setCompletedTasksCount(completedTasks.length);
@@ -170,7 +172,14 @@ const Dashboard: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
         {activeProjects.length > 0 ? (
           activeProjects.map((project) => (
-            <ProjectCard key={project.id} project={{ ...project, team_name: project.teams?.name || 'No Team' }} />
+            <ProjectCard
+              key={project.id}
+              project={{
+                ...project,
+                team_name: project.teams?.[0]?.name || 'No Team', // Access first element of teams array
+                priority: project.priority || 'Medium' // Ensure priority is a string
+              }}
+            />
           ))
         ) : (
           <p className="text-gray-500 col-span-full">No active projects found.</p>

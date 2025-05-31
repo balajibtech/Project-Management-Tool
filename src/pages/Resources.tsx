@@ -1,17 +1,16 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
-import { Link } from 'react-router-dom';
-import { PlusCircle, Edit, Trash2, Search, User, Briefcase, CalendarDays } from 'lucide-react';
+import { PlusCircle, Edit, Trash2, Search } from 'lucide-react'; // Removed unused User, Briefcase, CalendarDays
 
 interface Resource {
   id: string;
   name: string;
+  email: string;
   role: string;
-  skills: string[];
+  allocation_percentage: number;
   daily_capacity: number;
   weekly_capacity: number;
   time_off: string;
-  allocation_percentage: number;
 }
 
 const Resources: React.FC = () => {
@@ -50,12 +49,12 @@ const Resources: React.FC = () => {
     setIsEditing(false);
     setCurrentResource({
       name: '',
+      email: '',
       role: '',
-      skills: [],
+      allocation_percentage: 100,
       daily_capacity: 8,
       weekly_capacity: 40,
       time_off: '',
-      allocation_percentage: 0,
     });
     setShowModal(true);
   };
@@ -67,24 +66,9 @@ const Resources: React.FC = () => {
   };
 
   const handleDeleteResource = async (id: string) => {
-    if (window.confirm('Are you sure you want to delete this resource? This will also unassign them from tasks/projects.')) {
+    if (window.confirm('Are you sure you want to delete this resource?')) {
       setLoading(true);
       try {
-        // First, set assigned_to to null for any tasks assigned to this resource
-        const { error: updateTasksError } = await supabase
-          .from('tasks')
-          .update({ assigned_to: null })
-          .eq('assigned_to', id);
-        if (updateTasksError) throw updateTasksError;
-
-        // Then, set owner_id to null for any projects owned by this resource
-        const { error: updateProjectsError } = await supabase
-          .from('projects')
-          .update({ owner_id: null })
-          .eq('owner_id', id);
-        if (updateProjectsError) throw updateProjectsError;
-
-        // Finally, delete the resource
         const { error } = await supabase
           .from('resources')
           .delete()
@@ -109,12 +93,12 @@ const Resources: React.FC = () => {
     try {
       const resourceData = {
         name: currentResource.name,
+        email: currentResource.email,
         role: currentResource.role,
-        skills: currentResource.skills || [],
+        allocation_percentage: currentResource.allocation_percentage,
         daily_capacity: currentResource.daily_capacity,
         weekly_capacity: currentResource.weekly_capacity,
-        time_off: currentResource.time_off || '',
-        allocation_percentage: currentResource.allocation_percentage || 0,
+        time_off: currentResource.time_off,
       };
 
       if (isEditing && currentResource.id) {
@@ -141,8 +125,8 @@ const Resources: React.FC = () => {
 
   const filteredResources = resources.filter(resource =>
     resource.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    resource.role.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    resource.skills.some(skill => skill.toLowerCase().includes(searchTerm.toLowerCase()))
+    resource.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    resource.role.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   if (loading && resources.length === 0) {
@@ -181,7 +165,7 @@ const Resources: React.FC = () => {
       <div className="mb-6 relative">
         <input
           type="text"
-          placeholder="Search resources by name, role, or skills..."
+          placeholder="Search resources..."
           className="w-full p-3 pl-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition duration-200 shadow-sm"
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
@@ -191,7 +175,7 @@ const Resources: React.FC = () => {
 
       {filteredResources.length === 0 && !loading ? (
         <div className="bg-white p-6 rounded-xl shadow-lg text-center text-gray-600">
-          <p className="text-lg font-medium">No resources found. Start by adding a new one!</p>
+          <p className="text-lg font-medium">No resources found matching your criteria.</p>
         </div>
       ) : (
         <div className="overflow-x-auto bg-white rounded-xl shadow-lg border border-gray-200">
@@ -199,31 +183,25 @@ const Resources: React.FC = () => {
             <thead className="bg-gray-50">
               <tr>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Skills</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Capacity (Daily/Weekly)</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Allocation %</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Allocation</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Daily Capacity</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Weekly Capacity</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Time Off</th>
                 <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
               </tr>
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {filteredResources.map((resource) => (
                 <tr key={resource.id} className="hover:bg-gray-50 transition-colors duration-150">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                    <Link to={`/resources/${resource.id}`} className="text-blue-600 hover:underline">
-                      {resource.name}
-                    </Link>
-                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{resource.name}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{resource.email}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{resource.role}</td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
-                    {resource.skills && resource.skills.length > 0 ? resource.skills.join(', ') : 'N/A'}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
-                    {resource.daily_capacity}h / {resource.weekly_capacity}h
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">
-                    {resource.allocation_percentage}%
-                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{resource.allocation_percentage}%</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{resource.daily_capacity} hrs</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{resource.weekly_capacity} hrs</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{resource.time_off || 'N/A'}</td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     <div className="flex justify-end space-x-2">
                       <button
@@ -258,12 +236,23 @@ const Resources: React.FC = () => {
             </h2>
             <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div className="col-span-full">
-                <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-1">Resource Name</label>
+                <label htmlFor="name" className="block text-sm font-medium text-gray-700 mb-1">Name</label>
                 <input
                   type="text"
                   id="name"
                   value={currentResource.name || ''}
                   onChange={(e) => setCurrentResource({ ...currentResource, name: e.target.value })}
+                  className="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
+                  required
+                />
+              </div>
+              <div className="col-span-full">
+                <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-1">Email</label>
+                <input
+                  type="email"
+                  id="email"
+                  value={currentResource.email || ''}
+                  onChange={(e) => setCurrentResource({ ...currentResource, email: e.target.value })}
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
                   required
                 />
@@ -280,20 +269,22 @@ const Resources: React.FC = () => {
                 />
               </div>
               <div>
-                <label htmlFor="skills" className="block text-sm font-medium text-gray-700 mb-1">Skills (comma-separated)</label>
+                <label htmlFor="allocation_percentage" className="block text-sm font-medium text-gray-700 mb-1">Allocation Percentage (%)</label>
                 <input
-                  type="text"
-                  id="skills"
-                  value={currentResource.skills?.join(', ') || ''}
-                  onChange={(e) => setCurrentResource({ ...currentResource, skills: e.target.value.split(',').map(s => s.trim()).filter(s => s) })}
+                  type="number"
+                  id="allocation_percentage"
+                  value={currentResource.allocation_percentage || 0}
+                  onChange={(e) => setCurrentResource({ ...currentResource, allocation_percentage: parseFloat(e.target.value) })}
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
+                  min="0"
+                  max="100"
                 />
               </div>
               <div>
-                <label htmlFor="dailyCapacity" className="block text-sm font-medium text-gray-700 mb-1">Daily Capacity (hours)</label>
+                <label htmlFor="daily_capacity" className="block text-sm font-medium text-gray-700 mb-1">Daily Capacity (hours)</label>
                 <input
                   type="number"
-                  id="dailyCapacity"
+                  id="daily_capacity"
                   value={currentResource.daily_capacity || 0}
                   onChange={(e) => setCurrentResource({ ...currentResource, daily_capacity: parseFloat(e.target.value) })}
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
@@ -301,10 +292,10 @@ const Resources: React.FC = () => {
                 />
               </div>
               <div>
-                <label htmlFor="weeklyCapacity" className="block text-sm font-medium text-gray-700 mb-1">Weekly Capacity (hours)</label>
+                <label htmlFor="weekly_capacity" className="block text-sm font-medium text-gray-700 mb-1">Weekly Capacity (hours)</label>
                 <input
                   type="number"
-                  id="weeklyCapacity"
+                  id="weekly_capacity"
                   value={currentResource.weekly_capacity || 0}
                   onChange={(e) => setCurrentResource({ ...currentResource, weekly_capacity: parseFloat(e.target.value) })}
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
@@ -312,26 +303,14 @@ const Resources: React.FC = () => {
                 />
               </div>
               <div className="col-span-full">
-                <label htmlFor="timeOff" className="block text-sm font-medium text-gray-700 mb-1">Time-off Tracking (e.g., "Vacation: 2024-07-01 to 2024-07-10")</label>
+                <label htmlFor="time_off" className="block text-sm font-medium text-gray-700 mb-1">Time Off (e.g., "Vacation: 2024-07-15 to 2024-07-20")</label>
                 <textarea
-                  id="timeOff"
+                  id="time_off"
                   value={currentResource.time_off || ''}
                   onChange={(e) => setCurrentResource({ ...currentResource, time_off: e.target.value })}
                   rows={2}
                   className="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
                 ></textarea>
-              </div>
-              <div>
-                <label htmlFor="allocationPercentage" className="block text-sm font-medium text-gray-700 mb-1">Current Allocation Percentage</label>
-                <input
-                  type="number"
-                  id="allocationPercentage"
-                  value={currentResource.allocation_percentage || 0}
-                  onChange={(e) => setCurrentResource({ ...currentResource, allocation_percentage: parseFloat(e.target.value) })}
-                  className="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
-                  min="0"
-                  max="100"
-                />
               </div>
               {error && (
                 <div className="col-span-full bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg relative" role="alert">

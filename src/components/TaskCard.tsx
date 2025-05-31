@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { CalendarDays, Clock, Tag, UserCircle, ListChecks } from 'lucide-react';
+import { CalendarDays, Clock, ListChecks } from 'lucide-react'; // Removed unused Tag, UserCircle
 
 interface Task {
   id: string;

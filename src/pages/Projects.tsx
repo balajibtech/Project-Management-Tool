@@ -1,45 +1,57 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
-import { Link } from 'react-router-dom';
-import { PlusCircle, Search } from 'lucide-react';
 import ProjectCard from '../components/ProjectCard';
-import ProjectFormModal from '../components/ProjectFormModal'; // Import ProjectFormModal
+import { PlusCircle, Search } from 'lucide-react'; // Removed unused Link, handleEditProject, handleDeleteProject
+import ProjectFormModal from '../components/ProjectFormModal'; // Import the modal component
 
 interface Project {
   id: string;
   name: string;
   description: string;
   status: string;
-  priority: string | null;
+  priority: string; // Ensure this is string
   start_date: string;
   end_date: string;
   planned_budget: number;
   actual_budget: number;
   owner_id: string;
-  owner_name?: string;
-  team_id?: string;
-  team_name?: string;
+  team_id: string;
   progress: number;
-  created_by: string;
+  owner_name?: string;
+  team_name?: string;
+}
+
+interface Resource {
+  id: string;
+  name: string;
+}
+
+interface Team {
+  id: string;
+  name: string;
 }
 
 const Projects: React.FC = () => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [activeFilter, setActiveFilter] = useState('All'); // 'All', 'Active', 'Completed', 'On Hold', 'Cancelled'
   const [showModal, setShowModal] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
-  const [currentProjectData, setCurrentProjectData] = useState<Partial<Project>>({}); // Data for the modal
-  const [resources, setResources] = useState<{ id: string; name: string }[]>([]);
-  const [teams, setTeams] = useState<{ id: string; name: string }[]>([]);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [activeFilter, setActiveFilter] = useState<string>('All');
+  const [currentProjectData, setCurrentProjectData] = useState<Partial<Project>>({});
+  const [resources, setResources] = useState<Resource[]>([]);
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const projectStatuses = ['All', 'Not Started', 'In Progress', 'Completed', 'On Hold', 'Cancelled'];
 
   useEffect(() => {
     fetchProjects();
     fetchResources();
     fetchTeams();
-  }, [activeFilter]);
+  }, [activeFilter]); // Re-fetch projects when filter changes
 
   const fetchProjects = async () => {
     setLoading(true);
@@ -65,9 +77,10 @@ const Projects: React.FC = () => {
       const projectsWithDetails = data.map(p => ({
         ...p,
         owner_name: p.owner ? p.owner.name : 'N/A',
-        team_name: p.team ? p.team.name : 'N/A',
-        priority: p.priority || 'Medium'
+        team_name: p.team?.[0]?.name || 'N/A', // Access first element of teams array
+        priority: p.priority || 'Medium', // Ensure priority is set
       }));
+
       setProjects(projectsWithDetails as Project[]);
     } catch (err: any) {
       setError(err.message);
@@ -99,126 +112,43 @@ const Projects: React.FC = () => {
 
   const handleCreateProject = () => {
     setIsEditing(false);
-    setCurrentProjectData({
-      name: '',
-      description: '',
-      status: 'Not Started',
-      priority: 'Medium',
-      start_date: new Date().toISOString().split('T')[0],
-      end_date: new Date().toISOString().split('T')[0],
-      planned_budget: 0,
-      actual_budget: 0,
-      owner_id: '',
-      team_id: '',
-      progress: 0,
-    });
+    setCurrentProjectData({}); // Clear previous data
     setShowModal(true);
   };
 
-  const handleEditProject = (project: Project) => {
-    setIsEditing(true);
-    setCurrentProjectData({
-      ...project,
-      start_date: project.start_date ? new Date(project.start_date).toISOString().split('T')[0] : '',
-      end_date: project.end_date ? new Date(project.end_date).toISOString().split('T')[0] : '',
-    });
-    setShowModal(true);
-  };
-
-  const handleDeleteProject = async (id: string) => {
-    if (window.confirm('Are you sure you want to delete this project? This action cannot be undone.')) {
-      setLoading(true);
-      try {
-        const { error: tasksError } = await supabase
-          .from('tasks')
-          .delete()
-          .eq('project_id', id);
-        if (tasksError) throw tasksError;
-
-        const { error } = await supabase
-          .from('projects')
-          .delete()
-          .eq('id', id);
-
-        if (error) throw error;
-        fetchProjects();
-      } catch (err: any) {
-        setError(err.message);
-        console.error('Error deleting project:', err);
-      } finally {
-        setLoading(false);
-      }
-    }
-  };
-
-  const handleModalSubmit = async (formData: Partial<Project>) => {
-    setLoading(true);
-    setError(null);
-
+  const handleModalSubmit = async (formData: any) => {
+    setIsSubmitting(true);
+    setFormError(null);
     try {
-      if (isEditing && formData.id) {
+      if (isEditing && currentProjectData.id) {
         const { error } = await supabase
           .from('projects')
-          .update({
-            name: formData.name,
-            description: formData.description,
-            status: formData.status,
-            priority: formData.priority,
-            start_date: formData.start_date,
-            end_date: formData.end_date,
-            planned_budget: formData.planned_budget,
-            actual_budget: formData.actual_budget,
-            owner_id: formData.owner_id || null,
-            team_id: formData.team_id || null,
-            progress: formData.progress,
-          })
-          .eq('id', formData.id);
+          .update(formData)
+          .eq('id', currentProjectData.id);
         if (error) throw error;
       } else {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) {
-          setError('User not authenticated. Please log in to create a project.');
-          setLoading(false);
-          return;
-        }
-
         const { error } = await supabase
           .from('projects')
-          .insert({
-            name: formData.name,
-            description: formData.description,
-            status: formData.status,
-            priority: formData.priority,
-            start_date: formData.start_date,
-            end_date: formData.end_date,
-            planned_budget: formData.planned_budget,
-            actual_budget: formData.actual_budget,
-            owner_id: formData.owner_id || null,
-            team_id: formData.team_id || null,
-            progress: formData.progress,
-            created_by: user.id,
-          });
+          .insert(formData);
         if (error) throw error;
       }
       setShowModal(false);
-      fetchProjects();
+      fetchProjects(); // Refresh list
     } catch (err: any) {
-      setError(err.message);
+      setFormError(err.message);
       console.error('Error saving project:', err);
     } finally {
-      setLoading(false);
+      setIsSubmitting(false);
     }
   };
 
-  const filteredProjects = projects.filter(project =>
-    project.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    project.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    project.status.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    project.owner_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    project.team_name?.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  const filterOptions = ['All', 'In Progress', 'On Hold', 'Completed', 'Not Started', 'Cancelled'];
+  const filteredProjects = projects.filter(project => {
+    const matchesSearch = project.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          project.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          project.owner_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          project.team_name?.toLowerCase().includes(searchTerm.toLowerCase());
+    return matchesSearch;
+  });
 
   if (loading && projects.length === 0) {
     return (
@@ -253,8 +183,8 @@ const Projects: React.FC = () => {
         </button>
       </div>
 
-      <div className="flex flex-col md:flex-row md:items-center justify-between mb-6 space-y-4 md:space-y-0 md:space-x-4">
-        <div className="relative flex-grow">
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mb-6">
+        <div className="relative w-full sm:w-1/2 lg:w-1/3">
           <input
             type="text"
             placeholder="Search projects..."
@@ -264,20 +194,18 @@ const Projects: React.FC = () => {
           />
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" size={20} />
         </div>
-
-        <div className="flex items-center space-x-2">
-          <span className="text-gray-600 font-medium">Filter:</span>
-          {filterOptions.map(filter => (
+        <div className="flex flex-wrap justify-center sm:justify-end gap-2">
+          {projectStatuses.map(status => (
             <button
-              key={filter}
-              onClick={() => setActiveFilter(filter)}
-              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors duration-200
-                ${activeFilter === filter
+              key={status}
+              onClick={() => setActiveFilter(status)}
+              className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors duration-200 ${
+                activeFilter === status
                   ? 'bg-blue-600 text-white shadow-md'
-                  : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
-                }`}
+                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+              }`}
             >
-              {filter}
+              {status}
             </button>
           ))}
         </div>
@@ -285,7 +213,7 @@ const Projects: React.FC = () => {
 
       {filteredProjects.length === 0 && !loading ? (
         <div className="bg-white p-6 rounded-xl shadow-lg text-center text-gray-600">
-          <p className="text-lg font-medium">No projects found. Start by creating a new one!</p>
+          <p className="text-lg font-medium">No projects found matching your criteria.</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -295,16 +223,17 @@ const Projects: React.FC = () => {
         </div>
       )}
 
+      {/* Project Form Modal */}
       <ProjectFormModal
         isOpen={showModal}
         onClose={() => setShowModal(false)}
-        initialData={currentProjectData}
+        initialData={{ ...currentProjectData, priority: currentProjectData.priority || 'Medium' }} // Ensure priority is string
         isEditing={isEditing}
         onSubmit={handleModalSubmit}
         resources={resources}
         teams={teams}
-        formError={error}
-        loading={loading}
+        formError={formError}
+        loading={isSubmitting}
       />
     </div>
   );

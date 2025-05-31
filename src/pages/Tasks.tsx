@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
 import { Link } from 'react-router-dom';
-import { PlusCircle, Search, LayoutKanban, List, FolderKanban, User, CalendarDays } from 'lucide-react';
+import { PlusCircle, Search, List, Edit, Trash2, Kanban } from 'lucide-react'; // Added LayoutKanban
 import TaskCard from '../components/TaskCard'; // Import the new TaskCard component
 
 interface Task {
@@ -251,7 +251,7 @@ const Tasks: React.FC = () => {
               className={`p-2 ${viewMode === 'kanban' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-100'} transition-colors duration-200`}
               title="Kanban View"
             >
-              <LayoutKanban size={20} />
+              <Kanban size={30} />
             </button>
             <button
               onClick={() => setViewMode('list')}

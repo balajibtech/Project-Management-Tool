@@ -1,32 +1,34 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../supabaseClient';
+import { PlusCircle, Edit, Trash2, Search, Users, Eye } from 'lucide-react'; // Added Eye, removed unused User
 import { Link } from 'react-router-dom';
-import { PlusCircle, Edit, Trash2, Search, Users, User } from 'lucide-react';
 
 interface Team {
   id: string;
   name: string;
-  members?: { id: string; name: string; role_in_team: string }[];
 }
 
-interface Resource {
+interface TeamMember {
   id: string;
-  name: string;
+  team_id: string;
+  resource_id: string;
+  role_in_team: string;
+  resource: { name: string }[] | null; // Changed to array
 }
 
 const Teams: React.FC = () => {
   const [teams, setTeams] = useState<Team[]>([]);
+  const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
-  const [currentTeam, setCurrentTeam] = useState<Partial<Team>>({ name: '', members: [] });
-  const [allResources, setAllResources] = useState<Resource[]>([]);
+  const [currentTeam, setCurrentTeam] = useState<Partial<Team>>({});
   const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
     fetchTeams();
-    fetchAllResources();
+    fetchTeamMembers();
   }, []);
 
   const fetchTeams = async () => {
@@ -35,28 +37,11 @@ const Teams: React.FC = () => {
     try {
       const { data, error } = await supabase
         .from('teams')
-        .select(`
-          id,
-          name,
-          team_members(
-            resource_id,
-            role_in_team,
-            resource:resources(name)
-          )
-        `)
+        .select('*')
         .order('name', { ascending: true });
 
       if (error) throw error;
-
-      const teamsWithMembers = data.map(team => ({
-        ...team,
-        members: team.team_members.map(tm => ({
-          id: tm.resource_id,
-          name: tm.resource?.name || 'Unknown',
-          role_in_team: tm.role_in_team
-        }))
-      }));
-      setTeams(teamsWithMembers as Team[]);
+      setTeams(data as Team[]);
     } catch (err: any) {
       setError(err.message);
       console.error('Error fetching teams:', err);
@@ -65,19 +50,24 @@ const Teams: React.FC = () => {
     }
   };
 
-  const fetchAllResources = async () => {
+  const fetchTeamMembers = async () => {
     try {
-      const { data, error } = await supabase.from('resources').select('id, name');
+      const { data, error } = await supabase
+        .from('team_members')
+        .select(`
+          *,
+          resource:resources(name)
+        `);
       if (error) throw error;
-      setAllResources(data);
+      setTeamMembers(data as TeamMember[]);
     } catch (err: any) {
-      console.error('Error fetching all resources:', err.message);
+      console.error('Error fetching team members:', err.message);
     }
   };
 
   const handleCreateTeam = () => {
     setIsEditing(false);
-    setCurrentTeam({ name: '', members: [] });
+    setCurrentTeam({ name: '' });
     setShowModal(true);
   };
 
@@ -88,17 +78,9 @@ const Teams: React.FC = () => {
   };
 
   const handleDeleteTeam = async (id: string) => {
-    if (window.confirm('Are you sure you want to delete this team? This will also remove all team members from it.')) {
+    if (window.confirm('Are you sure you want to delete this team? This will also remove associated team members.')) {
       setLoading(true);
       try {
-        // Delete associated team members first
-        const { error: membersError } = await supabase
-          .from('team_members')
-          .delete()
-          .eq('team_id', id);
-        if (membersError) throw membersError;
-
-        // Then delete the team
         const { error } = await supabase
           .from('teams')
           .delete()
@@ -106,6 +88,7 @@ const Teams: React.FC = () => {
 
         if (error) throw error;
         fetchTeams(); // Refresh list
+        fetchTeamMembers(); // Refresh members as well
       } catch (err: any) {
         setError(err.message);
         console.error('Error deleting team:', err);
@@ -115,62 +98,24 @@ const Teams: React.FC = () => {
     }
   };
 
-  const handleMemberChange = (index: number, field: string, value: string) => {
-    const updatedMembers = [...(currentTeam.members || [])];
-    updatedMembers[index] = { ...updatedMembers[index], [field]: value };
-    setCurrentTeam({ ...currentTeam, members: updatedMembers });
-  };
-
-  const handleAddMember = () => {
-    setCurrentTeam({
-      ...currentTeam,
-      members: [...(currentTeam.members || []), { id: '', name: '', role_in_team: '' }]
-    });
-  };
-
-  const handleRemoveMember = (index: number) => {
-    const updatedMembers = (currentTeam.members || []).filter((_, i) => i !== index);
-    setCurrentTeam({ ...currentTeam, members: updatedMembers });
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
 
     try {
-      let teamId = currentTeam.id;
-      if (isEditing && teamId) {
+      if (isEditing && currentTeam.id) {
         const { error } = await supabase
           .from('teams')
           .update({ name: currentTeam.name })
-          .eq('id', teamId);
+          .eq('id', currentTeam.id);
         if (error) throw error;
-
-        // Handle team members: delete existing, then insert new ones
-        await supabase.from('team_members').delete().eq('team_id', teamId);
       } else {
-        const { data, error } = await supabase
+        const { error } = await supabase
           .from('teams')
-          .insert({ name: currentTeam.name })
-          .select('id')
-          .single();
+          .insert({ name: currentTeam.name });
         if (error) throw error;
-        teamId = data.id;
       }
-
-      if (currentTeam.members && currentTeam.members.length > 0) {
-        const membersToInsert = currentTeam.members.map(member => ({
-          team_id: teamId,
-          resource_id: member.id,
-          role_in_team: member.role_in_team
-        }));
-        const { error: membersInsertError } = await supabase
-          .from('team_members')
-          .insert(membersToInsert);
-        if (membersInsertError) throw membersInsertError;
-      }
-
       setShowModal(false);
       fetchTeams();
     } catch (err: any) {
@@ -181,9 +126,18 @@ const Teams: React.FC = () => {
     }
   };
 
+  const getTeamMemberCount = (teamId: string) => {
+    return teamMembers.filter(member => member.team_id === teamId).length;
+  };
+
+  const getTeamMembersList = (teamId: string) => {
+    const members = teamMembers.filter(member => member.team_id === teamId);
+    return members.map(tm => tm.resource?.[0]?.name || 'Unknown').join(', ');
+  };
+
   const filteredTeams = teams.filter(team =>
     team.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    team.members?.some(member => member.name.toLowerCase().includes(searchTerm.toLowerCase()))
+    getTeamMembersList(team.id).toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   if (loading && teams.length === 0) {
@@ -222,7 +176,7 @@ const Teams: React.FC = () => {
       <div className="mb-6 relative">
         <input
           type="text"
-          placeholder="Search teams by name or member..."
+          placeholder="Search teams..."
           className="w-full p-3 pl-10 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition duration-200 shadow-sm"
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
@@ -232,59 +186,65 @@ const Teams: React.FC = () => {
 
       {filteredTeams.length === 0 && !loading ? (
         <div className="bg-white p-6 rounded-xl shadow-lg text-center text-gray-600">
-          <p className="text-lg font-medium">No teams found. Start by creating a new one!</p>
+          <p className="text-lg font-medium">No teams found matching your criteria.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredTeams.map((team) => (
-            <div key={team.id} className="bg-white rounded-xl shadow-lg p-6 border border-gray-200 flex flex-col justify-between transform transition-transform duration-300 hover:scale-[1.01]">
-              <div>
-                <h2 className="text-xl font-semibold text-gray-800 mb-3">{team.name}</h2>
-                <p className="text-sm text-gray-600 mb-2 flex items-center"><Users size={16} className="mr-2" /> Team Members:</p>
-                {team.members && team.members.length > 0 ? (
-                  <ul className="list-disc list-inside text-sm text-gray-700 ml-4 space-y-1">
-                    {team.members.map(member => (
-                      <li key={member.id}>
-                        {member.name} (<span className="font-medium">{member.role_in_team || 'N/A'}</span>)
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-sm text-gray-500 ml-4">No members assigned.</p>
-                )}
-              </div>
-              <div className="flex justify-end space-x-2 mt-4">
-                <Link to={`/teams/${team.id}`} className="p-2 rounded-full text-blue-600 hover:bg-blue-100 transition-colors duration-200" title="View Details">
-                  <Eye size={18} />
-                </Link>
-                <button
-                  onClick={() => handleEditTeam(team)}
-                  className="p-2 rounded-full text-yellow-600 hover:bg-yellow-100 transition-colors duration-200"
-                  title="Edit Team"
-                >
-                  <Edit size={18} />
-                </button>
-                <button
-                  onClick={() => handleDeleteTeam(team.id)}
-                  className="p-2 rounded-full text-red-600 hover:bg-red-100 transition-colors duration-200"
-                  title="Delete Team"
-                >
-                  <Trash2 size={18} />
-                </button>
-              </div>
-            </div>
-          ))}
+        <div className="overflow-x-auto bg-white rounded-xl shadow-lg border border-gray-200">
+          <table className="min-w-full divide-y divide-gray-200">
+            <thead className="bg-gray-50">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Team Name</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Members</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Member Names</th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="bg-white divide-y divide-gray-200">
+              {filteredTeams.map((team) => (
+                <tr key={team.id} className="hover:bg-gray-50 transition-colors duration-150">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{team.name}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{getTeamMemberCount(team.id)}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{getTeamMembersList(team.id)}</td>
+                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                    <div className="flex justify-end space-x-2">
+                      <Link
+                        to={`/teams/${team.id}`}
+                        className="p-2 rounded-full text-blue-600 hover:bg-blue-100 transition-colors"
+                        title="View Details"
+                      >
+                        <Eye size={18} />
+                      </Link>
+                      <button
+                        onClick={() => handleEditTeam(team)}
+                        className="p-2 rounded-full text-yellow-600 hover:bg-yellow-100 transition-colors"
+                        title="Edit Team"
+                      >
+                        <Edit size={18} />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteTeam(team.id)}
+                        className="p-2 rounded-full text-red-600 hover:bg-red-100 transition-colors"
+                        title="Delete Team"
+                      >
+                        <Trash2 size={18} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 
       {/* Team Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-gray-900 bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl shadow-2xl p-8 w-full max-w-2xl max-h-[90vh] overflow-y-auto transform transition-all duration-300 scale-100 opacity-100">
+          <div className="bg-white rounded-xl shadow-2xl p-8 w-full max-w-md max-h-[90vh] overflow-y-auto transform transition-all duration-300 scale-100 opacity-100">
             <h2 className="text-2xl font-bold text-gray-800 mb-6 border-b pb-3">
               {isEditing ? 'Edit Team' : 'Create New Team'}
             </h2>
-            <form onSubmit={handleSubmit} className="grid grid-cols-1 gap-6">
+            <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label htmlFor="teamName" className="block text-sm font-medium text-gray-700 mb-1">Team Name</label>
                 <input
@@ -296,63 +256,13 @@ const Teams: React.FC = () => {
                   required
                 />
               </div>
-
-              <div className="col-span-full">
-                <h3 className="text-lg font-medium text-gray-800 mb-3">Team Members</h3>
-                {currentTeam.members?.map((member, index) => (
-                  <div key={index} className="flex items-end space-x-3 mb-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
-                    <div className="flex-1">
-                      <label htmlFor={`member-${index}-id`} className="block text-sm font-medium text-gray-700 mb-1">Resource</label>
-                      <select
-                        id={`member-${index}-id`}
-                        value={member.id}
-                        onChange={(e) => handleMemberChange(index, 'id', e.target.value)}
-                        className="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
-                        required
-                      >
-                        <option value="">Select Resource</option>
-                        {allResources.map(res => (
-                          <option key={res.id} value={res.id}>{res.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="flex-1">
-                      <label htmlFor={`member-${index}-role`} className="block text-sm font-medium text-gray-700 mb-1">Role in Team</label>
-                      <input
-                        type="text"
-                        id={`member-${index}-role`}
-                        value={member.role_in_team}
-                        onChange={(e) => handleMemberChange(index, 'role_in_team', e.target.value)}
-                        placeholder="e.g., Lead Developer"
-                        className="w-full p-2 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500"
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => handleRemoveMember(index)}
-                      className="p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors duration-200"
-                      title="Remove Member"
-                    >
-                      <Trash2 size={20} />
-                    </button>
-                  </div>
-                ))}
-                <button
-                  type="button"
-                  onClick={handleAddMember}
-                  className="flex items-center px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition-colors duration-200 mt-2"
-                >
-                  <PlusCircle className="mr-2" size={20} /> Add Member
-                </button>
-              </div>
-
               {error && (
-                <div className="col-span-full bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg relative" role="alert">
+                <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded-lg relative" role="alert">
                   <strong className="font-bold">Error!</strong>
                   <span className="block sm:inline"> {error}</span>
                 </div>
               )}
-              <div className="col-span-full flex justify-end space-x-3 mt-4">
+              <div className="flex justify-end space-x-3 mt-4">
                 <button
                   type="button"
                   onClick={() => setShowModal(false)}
